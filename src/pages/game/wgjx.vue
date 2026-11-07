@@ -1,6 +1,10 @@
 <template>
   <view class="wgjx-page">
     <view id="wgjx-canvas" class="wgjx-canvas"></view>
+    <view class="wgjx-brand">
+      <image class="wgjx-brand-ico" src="/static/images/wgjx/icon.png" mode="aspectFit" />
+      <text class="wgjx-brand-txt">万国觉醒 · 统帅远征</text>
+    </view>
     <view v-if="tips" class="wgjx-tips">{{ tips }}</view>
     <view class="wgjx-rotate">
       <view class="rotate-icon"></view>
@@ -274,6 +278,9 @@ export default
 <style lang="scss" scoped>
 .wgjx-page { position: absolute; top: 0; left: 0; width: 100%; height: 100vh; overflow: hidden; background: #2a1e12; }
 .wgjx-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+.wgjx-brand { position: absolute; top: 28rpx; right: 28rpx; z-index: 5; display: flex; align-items: center; padding: 8rpx 18rpx 8rpx 8rpx; border-radius: 44rpx; background: rgba(20, 14, 8, 0.55); box-shadow: inset 0 0 0 1px rgba(200, 162, 75, 0.6); pointer-events: none; }
+.wgjx-brand-ico { width: 52rpx; height: 52rpx; border-radius: 10rpx; }
+.wgjx-brand-txt { margin-left: 12rpx; font-size: 24rpx; color: #ffe9a8; font-weight: bold; letter-spacing: 1px; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); }
 .wgjx-tips { position: absolute; bottom: 120rpx; left: 50%; transform: translateX(-50%); padding: 12rpx 28rpx; border-radius: 32rpx; background: rgba(0, 0, 0, 0.6); color: #ffe9a8; font-size: 26rpx; }
 .wgjx-rotate { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 999; background: #2a1e12; flex-direction: column; align-items: center; justify-content: center; }
 .rotate-icon { width: 120rpx; height: 76rpx; border: 8rpx solid #c8a24b; border-radius: 14rpx; margin-bottom: 30rpx; animation: wgjx-turn 1.6s ease-in-out infinite; }

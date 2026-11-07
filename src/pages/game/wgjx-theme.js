@@ -341,6 +341,13 @@ export function drawButton(scene, opts) {
   const fillDeep = opts.fillDeep === undefined ? shade(fill, 0.66) : opts.fillDeep
   const radius = opts.radius === undefined ? Math.min(h / 2, 18) : opts.radius
   const box = scene.add.container(x, y)
+  // 若已预加载万国觉醒真实按钮底纹，则作为背景铺底（美术与官方保持一致）
+  if (scene.textures && scene.textures.exists('rokBtn')) {
+    const bg = scene.add.image(0, 0, 'rokBtn')
+    bg.setDisplaySize(w, h)
+    bg.setAlpha(0.96)
+    box.add(bg)
+  }
   const g = scene.add.graphics()
   g.fillStyle(COLOR.woodDark, 0.45)
   g.fillRoundedRect(-w / 2, -h / 2 + 4, w, h, radius)

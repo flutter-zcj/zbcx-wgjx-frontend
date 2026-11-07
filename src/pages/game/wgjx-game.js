@@ -49,6 +49,14 @@ export default function createWgjxScene(Phaser, hooks) {
       super({ key: 'WgjxScene' })
     }
 
+    /** 预加载万国觉醒真实 UI 贴图（按钮底纹），缺失时按钮自动回退矢量绘制 */
+    preload() {
+      const btnUrl = '/static/images/wgjx/apk/img_btnBG.png'
+      if (this.load && this.textures && !this.textures.exists('rokBtn')) {
+        this.load.image('rokBtn', btnUrl)
+      }
+    }
+
     create() {
       this.alive = false
       this.gameOver = false

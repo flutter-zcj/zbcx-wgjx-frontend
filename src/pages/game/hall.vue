@@ -62,7 +62,7 @@
         </view>
         <view class="quick" @click="onEntry('统帅远征')">
           <view class="quick-icon quick-icon--wgjx">
-            <view class="wgjx-sword"></view>
+            <image class="wgjx-ico" src="/static/images/wgjx/icon.png" mode="aspectFit" />
           </view>
           <text class="quick-txt">统帅远征</text>
         </view>
@@ -518,7 +518,7 @@ export default
 .safe-dial { width: 16px; height: 16px; border-radius: 50%; border: 3px solid #8a5200; }
 .tv-screen { width: 26px; height: 18px; border-radius: 3px; background: rgba(255, 255, 255, 0.85); }
 .guild-shield { width: 18px; height: 22px; background: rgba(255, 255, 255, 0.9); border-radius: 4px 4px 50% 50%; }
-.wgjx-sword { width: 6px; height: 22px; background: rgba(255, 255, 255, 0.92); border-radius: 3px; transform: rotate(45deg); box-shadow: -2px 2px 0 rgba(122, 60, 10, 0.5); }
+.wgjx-ico { width: 34px; height: 34px; border-radius: 7px; object-fit: contain; box-shadow: 0 0 0 2px rgba(255, 246, 200, 0.7), 0 2px 4px rgba(60, 20, 0, 0.4); }
 .quick-txt { margin-top: 4px; font-size: 15px; color: #46688f; }
 
 .loc { display: flex; align-items: center; height: 42px; padding: 0 14px 0 10px; margin-left: 18px; border-radius: 21px; background: rgba(255, 255, 255, 0.9); box-shadow: 0 3px 8px rgba(50, 80, 130, 0.16); }
