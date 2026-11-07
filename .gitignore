@@ -1,0 +1,27 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+.DS_Store
+dist
+*.local
+
+# 与《万国觉醒·统帅远征》2D Phaser 小游戏无关的模板重型资源（3D 地图/模型/旧版组件），
+# 不纳入游戏仓库，避免仓库体积过大；本地仍可保留用于模板其他功能。
+src/static/cesium/
+src/static/cxe/
+src/static/model/
+
+# Editor directories and files
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
