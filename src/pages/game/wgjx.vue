@@ -225,21 +225,21 @@ export default
     },
 
     /**
-     * 按当前页面地址推导 WebSocket 地址（后端 cherry 监听 9105）
-     * @returns {string} WebSocket 地址
+     * 按当前页面地址推导 WebSocket 地址（后端同源托管，WS 升级端点 /wgjx-ws）
+     * @returns {string} WebSocket 地址（与页面同主机同端口，避免跨域/路径不匹配）
      */
     resolveUrl()
     {
       if (typeof window === 'undefined')
       {
-        return 'ws://127.0.0.1:9105';
+        return 'ws://127.0.0.1:9105/wgjx-ws';
       }
       const loc = window.location;
       if (loc.protocol === 'https:')
       {
-        return 'wss://' + loc.host + '/wgjx-ws/';
+        return 'wss://' + loc.host + '/wgjx-ws';
       }
-      return 'ws://' + loc.hostname + ':9105';
+      return 'ws://' + loc.host + '/wgjx-ws';
     },
 
     /**
