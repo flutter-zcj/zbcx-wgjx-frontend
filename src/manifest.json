@@ -173,11 +173,11 @@
         "usingComponents" : true
     },
     "h5" : {
-        "publicPath" : "/account/",
-        "title" : "记账本",
+        "publicPath" : "./",
+        "title" : "万国觉醒·统帅远征",
         "domain" : "template_app",
         "router" : {
-            "base" : "/account/"
+            "base" : "./"
         },
         "template" : "../template.html"
     },

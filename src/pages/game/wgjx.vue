@@ -226,7 +226,9 @@ export default
 
     /**
      * 按当前页面地址推导 WebSocket 地址（后端同源托管，WS 升级端点 /wgjx-ws）
-     * @returns {string} WebSocket 地址（与页面同主机同端口，避免跨域/路径不匹配）
+     * 关键点：必须把页面自身的查询串（含分享链接的 ?sharecode=）一并附到 WS 地址上，
+     * 否则网关会对「无 sharecode 的 WS 升级」返回 403，导致真实用户落到离线模式。
+     * @returns {string} WebSocket 地址（与页面同主机同端口 + 同查询串，避免跨域/路径/鉴权不匹配）
      */
     resolveUrl()
     {
@@ -235,11 +237,12 @@ export default
         return 'ws://127.0.0.1:9105/wgjx-ws';
       }
       const loc = window.location;
+      const qs = loc.search || ''; // 含 ?sharecode=xxx（分享链接访问时）
       if (loc.protocol === 'https:')
       {
-        return 'wss://' + loc.host + '/wgjx-ws';
+        return 'wss://' + loc.host + '/wgjx-ws' + qs;
       }
-      return 'ws://' + loc.host + '/wgjx-ws';
+      return 'ws://' + loc.host + '/wgjx-ws' + qs;
     },
 
     /**
