@@ -29,6 +29,15 @@ import WgjxNet from './wgjx-net.js';
 import WgjxAudio from './wgjx-audio.js';
 import createWgjxScene from './wgjx-game.js';
 
+/**
+ * 模块级单例：uni-app H5 在同一路由下可能同时存在两个页面实例，
+ * 若不干预会创建两份 Phaser + 两条 WebSocket（重复登录/重复提交）。
+ * 这里只保留最后创建的一份，旧实例在 shutdown 时不误伤新实例。
+ */
+let ACTIVE_GAME = null;
+let ACTIVE_NET = null;
+let BOOT_SEQ = 0;
+
 export default
 {
   data()
@@ -43,6 +52,8 @@ export default
       lastAge: 5,
       game: null,
       scene: null,
+      booted: false,
+      unmounted: false,
       phaserPromise: null
     };
   },
@@ -55,6 +66,7 @@ export default
 
   mounted()
   {
+    this.unmounted = false;
     this.audio = new WgjxAudio();
     this.boot();
   },
@@ -121,6 +133,14 @@ export default
       if (el)
       {
         el.style.display = 'none';
+        // 关键：宿主 pc.js 会在宽屏下把「同一页面」塞进 iframe 里再跑一遍，
+        // 造成第二份 Phaser 与第二条 WebSocket（重复登录）。这里直接卸载 iframe。
+        const frame = el.querySelector('iframe');
+        if (frame)
+        {
+          try { frame.src = 'about:blank'; } catch (e) { /* 忽略 */ }
+        }
+        el.innerHTML = '';
       }
     },
 
@@ -131,12 +151,22 @@ export default
     restorePcAdapt()
     {
       const el = document.querySelector('uni-adapt-pc');
-      if (el)
+      if (!el)
       {
-        el.style.display = '';
+        return;
       }
+      el.style.display = '';
       if (window.innerWidth >= 768)
       {
+        // 还原宿主模板，保持其它页面原有的 PC 宽屏适配
+        if (!el.querySelector('iframe'))
+        {
+          const tpl = document.querySelector('#tpl-adapt-pc');
+          if (tpl)
+          {
+            el.innerHTML = (tpl.innerHTML || '').replace('helang-mobile-href', window.location.href);
+          }
+        }
         document.body.setAttribute('adapt', 'pc');
       }
     },
@@ -147,7 +177,20 @@ export default
      */
     async boot()
     {
+      if (this.booted)
+      {
+        return;
+      }
+      this.booted = true;
+      this.bootSeq = ++BOOT_SEQ;
       const Phaser = await this.loadPhaser();
+      // 路由切换时 uni-app 可能瞬时创建又销毁页面实例，等一帧再判断，
+      // 避免为已销毁的实例创建 Phaser/WebSocket（否则会重复登录）。
+      await new Promise((r) => setTimeout(r, 150));
+      if (this.unmounted)
+      {
+        return;
+      }
       if (!Phaser)
       {
         this.tips = '游戏引擎加载失败，请刷新重试';
@@ -159,7 +202,12 @@ export default
       this.profile = this.net.localProfile();
       this.season = this.net.season;
 
-      this.$nextTick(() =>
+      await this.$nextTick();
+      // 同一路由下若有更新的实例在启动，本实例主动让位，避免双份引擎/双条连接
+      if (this.unmounted || this.bootSeq !== BOOT_SEQ)
+      {
+        return;
+      }
       {
         const SceneClass = createWgjxScene(Phaser, {
           profile: this.profile,
@@ -276,6 +324,17 @@ export default
             });
           }
         });
+        // 清理同路由下残留的旧实例（若有）
+        if (ACTIVE_GAME)
+        {
+          try { ACTIVE_GAME.destroy(true); } catch (e) { /* 忽略重复销毁 */ }
+          ACTIVE_GAME = null;
+        }
+        if (ACTIVE_NET)
+        {
+          try { if (ACTIVE_NET.ws) ACTIVE_NET.ws.close(); } catch (e) { /* 忽略关闭失败 */ }
+          ACTIVE_NET = null;
+        }
         this.game = new Phaser.Game({
           type: Phaser.AUTO,
           parent: 'wgjx-canvas',
@@ -289,8 +348,10 @@ export default
           },
           scene: [SceneClass]
         });
+        ACTIVE_GAME = this.game;
+        ACTIVE_NET = this.net;
         this.connect();
-      });
+      }
     },
 
     /**
@@ -387,18 +448,27 @@ export default
      */
     shutdown()
     {
+      this.unmounted = true;
       if (this.audio)
       {
         this.audio.stopBgm();
       }
-      if (this.game)
+      if (this.game && this.game === ACTIVE_GAME)
       {
         this.game.destroy(true);
+        ACTIVE_GAME = null;
+      }
+      else if (this.game)
+      {
         this.game = null;
       }
-      if (this.net && this.net.ws)
+      if (this.net && this.net === ACTIVE_NET)
       {
-        this.net.ws.close();
+        if (this.net.ws)
+        {
+          this.net.ws.close();
+        }
+        ACTIVE_NET = null;
       }
     },
 
