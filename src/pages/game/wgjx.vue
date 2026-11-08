@@ -4,6 +4,7 @@
     <view class="wgjx-brand">
       <image class="wgjx-brand-ico" src="/static/images/wgjx/icon.png" mode="aspectFit" />
       <text class="wgjx-brand-txt">万国觉醒 · 统帅远征</text>
+      <text v-if="season" class="wgjx-season">{{ season }}</text>
     </view>
     <view v-if="tips" class="wgjx-tips">{{ tips }}</view>
     <view class="wgjx-rotate">
@@ -16,10 +17,12 @@
 <script>
 /**
  * @file 万国觉醒·统帅远征 页面。
- * 初始化 Phaser 场景、建立 WebSocket（不可达时自动降级 localStorage），
- * 并把场景事件灌入音效与网络，按生命周期驱动 BGM 与结算上报。
  *
- * 美术/音乐/UI 与《游戏资源分析》保持一致：鎏金史诗风、程序化图元、Web Audio 合成。
+ * 职责：
+ *  1. 动态加载 Phaser（此前依赖 window.Phaser 但构建产物未注入，导致「引擎未加载」，
+ *     这里改为运行时按序尝试 /static/game/phaser.min.js 等路径，彻底修复）；
+ *  2. 初始化场景、注入音频/网络/生命周期 hooks；
+ *  3. 建立同源 WebSocket（失败自动离线），同步赛季档案与排行榜。
  */
 
 import WgjxNet from './wgjx-net.js';
@@ -32,11 +35,15 @@ export default
   {
     return {
       tips: '',
+      season: '',
       net: null,
       audio: null,
       nickname: '执政官',
+      profile: null,
+      lastAge: 5,
       game: null,
-      scene: null
+      scene: null,
+      phaserPromise: null
     };
   },
 
@@ -59,6 +66,50 @@ export default
 
   methods:
   {
+    /**
+     * 动态加载 Phaser（构建产物未内置引擎，需运行时拉取）
+     * @returns {Promise<Object|null>} Phaser 全局对象
+     */
+    loadPhaser()
+    {
+      if (typeof window === 'undefined')
+      {
+        return Promise.resolve(null);
+      }
+      if (window.Phaser)
+      {
+        return Promise.resolve(window.Phaser);
+      }
+      if (this.phaserPromise)
+      {
+        return this.phaserPromise;
+      }
+      const urls = ['/static/game/phaser.min.js', './static/game/phaser.min.js', 'static/game/phaser.min.js'];
+      this.phaserPromise = new Promise((resolve) =>
+      {
+        const tryNext = (i) =>
+        {
+          if (i >= urls.length)
+          {
+            resolve(null);
+            return;
+          }
+          const s = document.createElement('script');
+          s.src = urls[i];
+          s.async = true;
+          s.onload = () => resolve(window.Phaser || null);
+          s.onerror = () =>
+          {
+            s.remove();
+            tryNext(i + 1);
+          };
+          document.head.appendChild(s);
+        };
+        tryNext(0);
+      });
+      return this.phaserPromise;
+    },
+
     /**
      * 解除宿主工程的 PC 宽屏适配，避免横屏页面被装入竖屏模拟框
      * @returns {void}
@@ -91,33 +142,63 @@ export default
     },
 
     /**
-     * 初始化 Phaser 与网络，注入场景 hooks
-     * @returns {void}
+     * 初始化引擎、网络并注入场景 hooks
+     * @returns {Promise<void>}
      */
-    boot()
+    async boot()
     {
-      const Phaser = typeof window !== 'undefined' ? window.Phaser : null;
+      const Phaser = await this.loadPhaser();
       if (!Phaser)
       {
-        this.tips = '游戏引擎未加载';
+        this.tips = '游戏引擎加载失败，请刷新重试';
         return;
       }
       this.clearPcAdapt();
       this.nickname = this.resolveNickname();
+      this.net = new WgjxNet(this.resolveUrl());
+      this.profile = this.net.localProfile();
+      this.season = this.net.season;
+
       this.$nextTick(() =>
       {
         const SceneClass = createWgjxScene(Phaser, {
+          profile: this.profile,
           onReady: (scene) =>
           {
             this.scene = scene;
+            if (typeof window !== 'undefined')
+            {
+              window.__wgjxScene = scene;
+            }
+          },
+          onSelect: () =>
+          {
+            if (this.audio) this.audio.pick();
           },
           onStart: () =>
           {
+            this.lastAge = 5;
             if (this.audio) this.audio.startBgm();
           },
           onSend: () =>
           {
             if (this.audio) this.audio.send();
+          },
+          onFlag: () =>
+          {
+            if (this.audio) this.audio.flag();
+          },
+          onCart: () =>
+          {
+            if (this.audio) this.audio.cart();
+          },
+          onSkill: () =>
+          {
+            if (this.audio) this.audio.skill();
+          },
+          onRepair: () =>
+          {
+            if (this.audio) this.audio.repair();
           },
           onScore: () =>
           {
@@ -130,6 +211,10 @@ export default
           onRally: () =>
           {
             if (this.audio) this.audio.rally();
+          },
+          onAge: () =>
+          {
+            if (this.audio) this.audio.age();
           },
           onWin: () =>
           {
@@ -150,13 +235,45 @@ export default
               this.goBack();
             }
           },
-          onGameOver: ({ score, win }) =>
+          onHud: (state) =>
+          {
+            // 仅在时代真正提升时提示，避免每次 HUD 同步都弹
+            if (state && state.age && state.age > this.lastAge)
+            {
+              this.lastAge = state.age;
+              this.tips = '时代 ' + state.age + ' · ' + state.civ;
+              setTimeout(() => { this.tips = ''; }, 1400);
+            }
+          },
+          onSaveProfile: (profile) =>
+          {
+            this.profile = profile;
+            if (this.net)
+            {
+              this.net.saveProfile(profile);
+            }
+          },
+          onGameOver: ({ score, win, civilization, commander, age }) =>
           {
             if (!this.net)
             {
               return Promise.resolve({ rank: 0, list: [] });
             }
-            return this.net.submit(this.nickname, score, win);
+            return this.net.submit({
+              nickname: this.nickname,
+              score,
+              win,
+              civilization,
+              commander,
+              age
+            }).then((res) =>
+            {
+              if (res && res.season)
+              {
+                this.season = res.season;
+              }
+              return res;
+            });
           }
         });
         this.game = new Phaser.Game({
@@ -164,7 +281,7 @@ export default
           parent: 'wgjx-canvas',
           width: 1280,
           height: 720,
-          backgroundColor: '#2a1e12',
+          backgroundColor: '#1e150c',
           scale:
           {
             mode: Phaser.Scale.FIT,
@@ -177,25 +294,44 @@ export default
     },
 
     /**
-     * 建立 WebSocket 并登录
+     * 建立 WebSocket、登录并同步赛季档案
      * @returns {void}
      */
     connect()
     {
-      const url = this.resolveUrl();
-      const net = new WgjxNet(url);
+      const net = this.net;
       net.on('login', (data) =>
       {
-        if (data && data.best)
+        if (!data)
+        {
+          return;
+        }
+        if (data.season)
+        {
+          this.season = data.season;
+        }
+        if (data.profile)
+        {
+          const serverMatches = data.profile.matches || 0;
+          const localMatches = (this.profile && this.profile.matches) || 0;
+          if (serverMatches > localMatches)
+          {
+            this.profile = data.profile;
+            if (this.scene)
+            {
+              this.scene.applyProfile(data.profile);
+            }
+          }
+        }
+        if (data.best)
         {
           this.tips = '历史最佳 ' + data.best;
           setTimeout(() => { this.tips = ''; }, 1600);
         }
       });
-      this.net = net;
       net.connect().then(() =>
       {
-        net.send('login', { nickname: this.nickname });
+        net.send('login', { nickname: this.nickname, playerId: net.playerId });
       }).catch(() =>
       {
         this.tips = '服务器未连接，已切换离线模式';
@@ -225,10 +361,10 @@ export default
     },
 
     /**
-     * 按当前页面地址推导 WebSocket 地址（后端同源托管，WS 升级端点 /wgjx-ws）
-     * 关键点：必须把页面自身的查询串（含分享链接的 ?sharecode=）一并附到 WS 地址上，
-     * 否则网关会对「无 sharecode 的 WS 升级」返回 403，导致真实用户落到离线模式。
-     * @returns {string} WebSocket 地址（与页面同主机同端口 + 同查询串，避免跨域/路径/鉴权不匹配）
+     * 按当前页面地址推导 WebSocket 地址（后端同源托管，WS 端点 /wgjx-ws）
+     * 关键：必须把页面查询串（含分享链接的 ?sharecode=）附到 WS 地址，
+     * 否则网关会对无 sharecode 的 WS 升级返回 403，真实用户会落到离线模式。
+     * @returns {string} WebSocket 地址
      */
     resolveUrl()
     {
@@ -237,7 +373,7 @@ export default
         return 'ws://127.0.0.1:9105/wgjx-ws';
       }
       const loc = window.location;
-      const qs = loc.search || ''; // 含 ?sharecode=xxx（分享链接访问时）
+      const qs = loc.search || '';
       if (loc.protocol === 'https:')
       {
         return 'wss://' + loc.host + '/wgjx-ws' + qs;
@@ -279,13 +415,14 @@ export default
 </script>
 
 <style lang="scss" scoped>
-.wgjx-page { position: absolute; top: 0; left: 0; width: 100%; height: 100vh; overflow: hidden; background: #2a1e12; }
+.wgjx-page { position: absolute; top: 0; left: 0; width: 100%; height: 100vh; overflow: hidden; background: #1e150c; }
 .wgjx-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-.wgjx-brand { position: absolute; top: 28rpx; right: 28rpx; z-index: 5; display: flex; align-items: center; padding: 8rpx 18rpx 8rpx 8rpx; border-radius: 44rpx; background: rgba(20, 14, 8, 0.55); box-shadow: inset 0 0 0 1px rgba(200, 162, 75, 0.6); pointer-events: none; }
-.wgjx-brand-ico { width: 52rpx; height: 52rpx; border-radius: 10rpx; }
-.wgjx-brand-txt { margin-left: 12rpx; font-size: 24rpx; color: #ffe9a8; font-weight: bold; letter-spacing: 1px; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); }
-.wgjx-tips { position: absolute; bottom: 120rpx; left: 50%; transform: translateX(-50%); padding: 12rpx 28rpx; border-radius: 32rpx; background: rgba(0, 0, 0, 0.6); color: #ffe9a8; font-size: 26rpx; }
-.wgjx-rotate { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 999; background: #2a1e12; flex-direction: column; align-items: center; justify-content: center; }
+.wgjx-brand { position: absolute; top: 8px; right: 8px; z-index: 5; display: flex; align-items: center; padding: 4px 10px 4px 4px; border-radius: 20px; background: rgba(20, 14, 8, 0.6); box-shadow: inset 0 0 0 1px rgba(200, 162, 75, 0.6); pointer-events: none; }
+.wgjx-brand-ico { width: 22px; height: 22px; border-radius: 5px; }
+.wgjx-brand-txt { margin-left: 6px; font-size: 12px; color: #ffe9a8; font-weight: bold; letter-spacing: 0.5px; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6); }
+.wgjx-season { margin-left: 6px; padding: 1px 6px; border-radius: 8px; background: rgba(200, 162, 75, 0.28); font-size: 10px; color: #ffe9a8; }
+.wgjx-tips { position: absolute; bottom: 14%; left: 50%; transform: translateX(-50%); padding: 6px 16px; border-radius: 18px; background: rgba(0, 0, 0, 0.62); color: #ffe9a8; font-size: 13px; }
+.wgjx-rotate { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 999; background: #1e150c; flex-direction: column; align-items: center; justify-content: center; }
 .rotate-icon { width: 120rpx; height: 76rpx; border: 8rpx solid #c8a24b; border-radius: 14rpx; margin-bottom: 30rpx; animation: wgjx-turn 1.6s ease-in-out infinite; }
 .rotate-txt { color: #ffe9a8; font-size: 30rpx; text-align: center; padding: 0 60rpx; }
 @keyframes wgjx-turn { 0% { transform: rotate(0deg); } 50% { transform: rotate(90deg); } 100% { transform: rotate(90deg); } }

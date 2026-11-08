@@ -173,6 +173,57 @@ export default class WgjxAudio {
     this.tone(1500, 0.03, 'square', 0.035)
   }
 
+  /** 选择文明/统帅：清脆短音 */
+  pick() {
+    this.tone(880, 0.05, 'triangle', 0.03)
+    this.noise(0.04, 3200, 2, 0.03)
+  }
+
+  /** 占领旗帜：号角上行 + 战鼓 */
+  flag() {
+    ;[392, 523, 659].forEach((f, i) => {
+      this.tone(f, 0.2, 'sawtooth', 0.055, i * 0.07)
+    })
+    this.noise(0.22, 520, 0.8, 0.12, 0.1, 240)
+  }
+
+  /** 圣物车受控：车轮与低音号角 */
+  cart() {
+    this.noise(0.5, 300, 1.2, 0.09, 0, 180)
+    this.tone(196, 0.4, 'triangle', 0.05)
+    this.tone(294, 0.3, 'sine', 0.04, 0.12)
+  }
+
+  /** 统帅技能：低频爆点 + 上扬扫频 */
+  skill() {
+    this.tone(80, 0.4, 'sawtooth', 0.14)
+    this.noise(0.5, 240, 0.7, 0.16, 0, 3200)
+    ;[440, 660, 880].forEach((f, i) => {
+      this.tone(f, 0.22, 'square', 0.05, 0.08 + i * 0.05)
+    })
+  }
+
+  /** 时代进阶：编钟 + 长和弦 */
+  age() {
+    ;[523, 659, 784, 1047].forEach((f, i) => {
+      this.tone(f, 0.7, 'sine', 0.06, i * 0.09)
+      this.tone(f * 2, 0.4, 'triangle', 0.025, i * 0.09)
+    })
+    this.noise(0.6, 6800, 2.4, 0.04, 0.2, 4200)
+  }
+
+  /** 修复主城：木槌敲击 */
+  repair() {
+    this.tone(220, 0.08, 'square', 0.05)
+    this.noise(0.1, 1200, 1.4, 0.07, 0.02, 600)
+  }
+
+  /** 讨伐野蛮人：闷响 */
+  barbarian() {
+    this.tone(110, 0.26, 'sawtooth', 0.1)
+    this.noise(0.24, 640, 0.8, 0.12, 0, 200)
+  }
+
   /**
    * 循环 BGM：低频铜管 + 弦乐 pad 的和声层，缓入
    * @returns {void}

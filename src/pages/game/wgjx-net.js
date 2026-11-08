@@ -1,19 +1,36 @@
 /**
- * @file 万国觉醒·统帅远征 WebSocket 客户端。
- * 与后端约定：每条消息为一行 JSON，形如 {"cmd":"x","data":{...}}（同 ddz-net）。
- * 后端为 cherry（Go Actor 框架）暴露的 WebSocket 端点。
- * 若 WebSocket 不可达，自动降级到 localStorage，保证小游戏独立可玩。
+ * @file 万国觉醒·统帅远征 v2.0 WebSocket 客户端。
  *
+ * 协议：一行一条 JSON，形如 {"cmd":"x","data":{...}}（与 ddz-net 同源）。
  * 指令集：
- *  - login        {nickname}            -> {playerId, best}
- *  - submitScore  {playerId, score, win}-> {rank}
- *  - getLeaderboard {}                  -> {list:[{nickname, score}]}
- *  - save         {playerId, progress}  -> {}
- *  - load         {playerId}            -> {progress}
+ *   login         {nickname, playerId}                        -> {playerId, best, profile, season}
+ *   submitScore   {playerId, nickname, score, win,
+ *                  civilization, commander, age}              -> {rank, list, season, best}
+ *   getLeaderboard{season}                                    -> {list, season}
+ *   saveProfile   {playerId, profile}                         -> {ok, season}
+ *   loadProfile   {playerId}                                  -> {profile, season}
+ *
+ * 连接不可达时自动降级到 localStorage（含赛季档案），保证小游戏独立可玩。
  */
 
 const LB_KEY = 'wgjx_leaderboard'
 const SAVE_KEY = 'wgjx_save'
+const PROFILE_KEY = 'wgjx_profile'
+const PID_KEY = 'wgjx_pid'
+
+/**
+ * 本地赛季标识（与后端 ISO 周口径一致）
+ * @returns {string} 形如 S2026-W45
+ */
+export function localSeason() {
+  const d = new Date()
+  const target = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  const dayNum = target.getUTCDay() || 7
+  target.setUTCDate(target.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1))
+  const week = Math.ceil(((target - yearStart) / 86400000 + 1) / 7)
+  return 'S' + target.getUTCFullYear() + '-W' + String(week).padStart(2, '0')
+}
 
 export default class WgjxNet {
   /**
@@ -27,14 +44,29 @@ export default class WgjxNet {
     this.connected = false
     this.retry = 0
     this.offline = !url
-    this.playerId = 'local-' + Math.floor(Math.random() * 9000 + 1000)
+    this.playerId = this.readPid()
+    this.season = localSeason()
+  }
+
+  /** 读取/生成稳定的本地玩家 ID */
+  readPid() {
+    try {
+      let pid = localStorage.getItem(PID_KEY)
+      if (!pid) {
+        pid = 'L' + Math.floor(Math.random() * 9000000 + 1000000)
+        localStorage.setItem(PID_KEY, pid)
+      }
+      return pid
+    } catch (e) {
+      return 'L' + Math.floor(Math.random() * 9000000 + 1000000)
+    }
   }
 
   /**
    * 注册消息处理器
-   * @param {string} cmd 指令名
-   * @param {Function} fn 回调，入参为 data
-   * @returns {WgjxNet} 支持链式调用
+   * @param {string} cmd 指令
+   * @param {Function} fn 回调
+   * @returns {WgjxNet} 链式
    */
   on(cmd, fn) {
     this.handlers[cmd] = fn
@@ -43,13 +75,13 @@ export default class WgjxNet {
 
   /**
    * 建立连接（离线模式直接 resolve）
-   * @returns {Promise<void>} 连接成功后 resolve
+   * @returns {Promise<void>}
    */
   connect() {
     if (this.offline) {
       return Promise.resolve()
     }
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       let ws
       try {
         ws = new WebSocket(this.url)
@@ -76,23 +108,20 @@ export default class WgjxNet {
     })
   }
 
-  /**
-   * 断线后按指数退避重连，最多 6 次，失败则转离线
-   */
+  /** 断线指数退避重连，最多 6 次 */
   scheduleReconnect() {
     if (this.retry >= 6) {
       this.offline = true
       return
     }
     this.retry += 1
-    const delay = Math.min(1000 * this.retry, 5000)
     setTimeout(() => {
       this.connect().catch(() => {})
-    }, delay)
+    }, Math.min(1000 * this.retry, 5000))
   }
 
   /**
-   * 解析下行消息并派发
+   * 解析下行消息
    * @param {string|Blob} raw 原始消息
    */
   async handleMessage(raw) {
@@ -114,6 +143,17 @@ export default class WgjxNet {
       } catch (err) {
         return
       }
+      if (msg.data && msg.data.season) {
+        this.season = msg.data.season
+      }
+      if (msg.data && msg.data.playerId) {
+        this.playerId = msg.data.playerId
+        try {
+          localStorage.setItem(PID_KEY, this.playerId)
+        } catch (e) {
+          /* 忽略隐私模式写入失败 */
+        }
+      }
       const fn = this.handlers[msg.cmd]
       if (fn) {
         fn(msg.data)
@@ -123,7 +163,7 @@ export default class WgjxNet {
 
   /**
    * 发送指令
-   * @param {string} cmd 指令名
+   * @param {string} cmd 指令
    * @param {Object} data 载荷
    */
   send(cmd, data = {}) {
@@ -140,61 +180,107 @@ export default class WgjxNet {
   }
 
   /**
-   * 离线降级：本地处理排行榜与存档
-   * @param {string} cmd 指令名
+   * 离线降级
+   * @param {string} cmd 指令
    * @param {Object} data 载荷
    */
   localHandle(cmd, data) {
+    const fn = this.handlers[cmd]
     if (cmd === 'login') {
-      const best = this.localBest()
-      const fn = this.handlers.login
-      if (fn) fn({ playerId: this.playerId, best })
+      const profile = this.localProfile()
+      if (fn) fn({ playerId: this.playerId, best: profile.best || 0, profile, season: this.season })
     } else if (cmd === 'submitScore') {
-      const rank = this.localSubmit(data.nickname, data.score)
-      const fn = this.handlers.submitScore
-      if (fn) fn({ rank })
+      const res = this.localSubmit(data)
+      if (fn) fn(res)
     } else if (cmd === 'getLeaderboard') {
-      const fn = this.handlers.getLeaderboard
-      if (fn) fn({ list: this.localBoard() })
+      if (fn) fn({ list: this.localBoard(), season: this.season })
+    } else if (cmd === 'saveProfile') {
+      this.writeProfile(data.profile)
+      if (fn) fn({ ok: true, season: this.season })
+    } else if (cmd === 'loadProfile') {
+      if (fn) fn({ profile: this.localProfile(), season: this.season })
     } else if (cmd === 'save') {
-      const fn = this.handlers.save
       if (fn) fn({})
     } else if (cmd === 'load') {
-      const fn = this.handlers.load
       if (fn) fn({ progress: this.localLoad() })
     }
   }
 
-  /** @returns {Array} 本地排行榜 */
+  /** 本地排行榜（仅当前赛季） */
   localBoard() {
     try {
-      return JSON.parse(localStorage.getItem(LB_KEY) || '[]')
+      const all = JSON.parse(localStorage.getItem(LB_KEY) || '[]')
+      return all.filter((r) => !r.season || r.season === this.season).slice(0, 20)
     } catch (e) {
       return []
     }
   }
 
-  /** @returns {number} 本地最佳分 */
-  localBest() {
-    return this.localBoard().reduce((m, r) => Math.max(m, r.score || 0), 0)
+  /** 本地档案 */
+  localProfile() {
+    try {
+      const p = JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}')
+      return Object.assign(
+        { civilization: 'china', commander: 'sun', age: 5, gems: 0, matches: 0, wins: 0, best: 0 },
+        p
+      )
+    } catch (e) {
+      return { civilization: 'china', commander: 'sun', age: 5, gems: 0, matches: 0, wins: 0, best: 0 }
+    }
   }
 
   /**
-   * 本地提交分数并排序
-   * @param {string} nickname 昵称
-   * @param {number} score 分数
-   * @returns {number} 名次（1 起）
+   * 写入本地档案
+   * @param {Object} profile 档案
    */
-  localSubmit(nickname, score) {
-    const list = this.localBoard()
-    list.push({ nickname: nickname || '执政官', score: score || 0, ts: Date.now() })
-    list.sort((a, b) => b.score - a.score)
-    const top = list.slice(0, 10)
-    localStorage.setItem(LB_KEY, JSON.stringify(top))
-    return top.findIndex((r) => r.score === score && r.nickname === (nickname || '执政官')) + 1
+  writeProfile(profile) {
+    try {
+      localStorage.setItem(PROFILE_KEY, JSON.stringify(profile || {}))
+    } catch (e) {
+      /* 忽略 */
+    }
   }
 
-  /** @returns {Object} 本地存档 */
+  /**
+   * 本地提交成绩
+   * @param {Object} data {nickname, score, civilization, commander, age}
+   * @returns {{rank:number, list:Array, season:string, best:number}} 结果
+   */
+  localSubmit(data) {
+    let all = []
+    try {
+      all = JSON.parse(localStorage.getItem(LB_KEY) || '[]')
+    } catch (e) {
+      all = []
+    }
+    const entry = {
+      playerId: this.playerId,
+      nickname: data.nickname || '执政官',
+      score: data.score || 0,
+      civilization: data.civilization || 'china',
+      commander: data.commander || 'sun',
+      age: data.age || 5,
+      season: this.season,
+      ts: Date.now()
+    }
+    all.push(entry)
+    all = all.filter((r) => !r.season || r.season === this.season)
+    all.sort((a, b) => (b.score || 0) - (a.score || 0) || (a.ts || 0) - (b.ts || 0))
+    all = all.slice(0, 20)
+    try {
+      localStorage.setItem(LB_KEY, JSON.stringify(all))
+    } catch (e) {
+      /* 忽略 */
+    }
+    const profile = this.localProfile()
+    profile.best = Math.max(profile.best || 0, entry.score)
+    profile.matches = (profile.matches || 0) + 1
+    profile.gems = (profile.gems || 0) + (entry.score >= 1800 ? 40 : entry.score >= 900 ? 15 : 5)
+    this.writeProfile(profile)
+    return { rank: all.findIndex((r) => r.ts === entry.ts) + 1, list: all, season: this.season, best: profile.best }
+  }
+
+  /** 本地存档 */
   localLoad() {
     try {
       return JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')
@@ -204,38 +290,25 @@ export default class WgjxNet {
   }
 
   /**
-   * 本地保存进度
-   * @param {Object} progress 进度对象
+   * 提交成绩并拉榜（超时 1.5s 降级本地）
+   * @param {Object} payload {nickname, score, win, civilization, commander, age}
+   * @returns {Promise<{rank:number, list:Array, season:string}>} 名次与榜单
    */
-  localSave(progress) {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(progress || {}))
-  }
-
-  /**
-   * 提交分数并拉取排行榜（单回合：后端 submitScore 应回 {rank, list}）。
-   * 离线或后端超时（1.5s）时降级到本地排行榜，保证结算面板始终有数据。
-   * @param {string} nickname 昵称
-   * @param {number} score 分数
-   * @param {boolean} win 是否胜利
-   * @returns {Promise<{rank:number, list:Array}>} 名次与榜单
-   */
-  submit(nickname, score, win) {
+  submit(payload) {
     if (this.offline) {
-      const rank = this.localSubmit(nickname, score)
-      return Promise.resolve({ rank, list: this.localBoard() })
+      return Promise.resolve(this.localSubmit(payload))
     }
     return new Promise((resolve) => {
-      const settled = { done: false }
-      const finish = (payload) => {
-        if (settled.done) {
+      let done = false
+      const finish = (p) => {
+        if (done) {
           return
         }
-        settled.done = true
-        resolve(payload)
+        done = true
+        resolve(p)
       }
       const timer = setTimeout(() => {
-        const rank = this.localSubmit(nickname, score)
-        finish({ rank, list: this.localBoard() })
+        finish(this.localSubmit(payload))
       }, 1500)
       const prev = this.handlers.submitScore
       this.handlers.submitScore = (data) => {
@@ -243,9 +316,25 @@ export default class WgjxNet {
           prev(data)
         }
         clearTimeout(timer)
-        finish({ rank: (data && data.rank) || 0, list: (data && data.list) || [] })
+        finish({ rank: (data && data.rank) || 0, list: (data && data.list) || [], season: (data && data.season) || this.season })
       }
-      this.send('submitScore', { nickname, score, win })
+      this.send('submitScore', Object.assign({ playerId: this.playerId }, payload))
     })
+  }
+
+  /**
+   * 保存档案到服务端（离线时写本地）
+   * @param {Object} profile 档案
+   * @returns {Promise<void>}
+   */
+  saveProfile(profile) {
+    this.writeProfile(profile)
+    this.send('saveProfile', { playerId: this.playerId, profile })
+    return Promise.resolve()
+  }
+
+  /** 主动拉取排行榜 */
+  refreshBoard() {
+    this.send('getLeaderboard', { season: this.season })
   }
 }
