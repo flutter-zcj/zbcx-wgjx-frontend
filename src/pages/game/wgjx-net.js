@@ -206,6 +206,23 @@ export default class WgjxNet {
     }
   }
 
+  /**
+   * 主动释放连接：标记离线，阻止重连，并关闭底层 socket
+   * @returns {void}
+   */
+  dispose() {
+    this.offline = true
+    this.handlers = {}
+    if (this.ws) {
+      try {
+        this.ws.close()
+      } catch (e) {
+        /* 忽略关闭异常 */
+      }
+      this.ws = null
+    }
+  }
+
   /** 本地排行榜（仅当前赛季） */
   localBoard() {
     try {

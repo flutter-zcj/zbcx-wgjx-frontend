@@ -332,7 +332,7 @@ export default
         }
         if (ACTIVE_NET)
         {
-          try { if (ACTIVE_NET.ws) ACTIVE_NET.ws.close(); } catch (e) { /* 忽略关闭失败 */ }
+          try { ACTIVE_NET.dispose(); } catch (e) { /* 忽略关闭失败 */ }
           ACTIVE_NET = null;
         }
         this.game = new Phaser.Game({
@@ -464,11 +464,12 @@ export default
       }
       if (this.net && this.net === ACTIVE_NET)
       {
-        if (this.net.ws)
-        {
-          this.net.ws.close();
-        }
+        this.net.dispose();
         ACTIVE_NET = null;
+      }
+      else if (this.net)
+      {
+        this.net.dispose();
       }
     },
 
